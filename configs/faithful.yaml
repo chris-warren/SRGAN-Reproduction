@@ -1,0 +1,67 @@
+# Faithful reproduction of Lattner & Nistal, Electronics 2021, 10, 1349.
+# Table 1 exactly. Does NOT fit an 8 GB card — intended for cloud hardware.
+# See DATASET.md for what the paper specifies vs what it leaves open.
+name: faithful
+notes: >
+  Table 1 as published. Unspecified by the paper and chosen here: batch size,
+  learning rate, optimiser and betas, n_critic, and the gradient-penalty weight.
+  gp_weight follows the authors' own DrumGAN config (lossMode WGANGP,
+  lambdaGP 10.0) rather than the literal Arjovsky citation — see
+  REPRODUCTION.md section 3.1.
+seed: 0
+
+stft:
+  n_fft: 2048
+  hop: 512
+  n_bins: 1024          # paper's frequency axis (Nyquist bin dropped)
+  scaling: signed_sqrt
+
+model:
+  early_ch: [18, 38]
+  conv4_out: 4096       # Conv2d(38, 4096, kernel=(1024,1)) — 159 M params alone
+  latent_ch: 128
+  latent_freq: 32       # 128 * 32 == conv4_out (Reshape1)
+  stack_ch: 256
+  noise_ch: 64
+  dilations: [1, 2, 4, 8, 16, 1, 2, 4, 8, 16]
+  critic_group_factor: 0.5 # [P] grouped convs, authors 6.2
+
+data:
+  root: /home/chris/thesis/data/mp3ml-waveform
+  bitrates: [16, 32, 64]
+  segment_frames: 336   # 4 s at 44.1 kHz, hop 512
+  train_stems: [mixture, bass, drums, other, vocals]
+  eval_stems: [mixture]
+
+train:
+  iterations: 40000
+  batch_size: 12
+  lr_g: 0.001
+  lr_d: 0.001
+  betas: [0.0, 0.99] # [P] authors
+  n_critic: 1 # [P] authors: 1:1 critic:generator
+  gp_weight: 5.0 # [P] authors
+  drift_weight: 0.5 # [P] authors
+  # Fidelity switches (REPRODUCTION.md 3.3). These reproduce the ORIGINAL
+  # implementation's behaviour, which is what this config is for.
+  #
+  # A long-standing divergence with `true` was traced to a missing equalized
+  # learning rate, not to this switch (1.2). With `model.equalized_lr: true`
+  # it now survives; without it, expect divergence within ~4 steps.
+  recreate_optimizers: true
+  gp_reduction: sum
+  init: he              # [P] From the authors (REPRODUCTION.md 1.1): eq. 3's single theta was in
+  # fact two weights, and the frequency profile is weighted 10x the rhythm one.
+  profile_theta_freq: 1.0e-4
+  profile_theta_rhyt: 1.0e-5
+  profile_p_freq: 1.3   # paper eq. 3
+  profile_p_rhyt: 1.6   # paper eq. 3
+  # UNVERIFIED on the target hardware. On our RTX 2070 Super (Turing) amp is a
+  # 1.6x *pessimisation* for this model (see local.yaml and REPRODUCTION.md
+  # 4.3), but that measurement does not transfer: Ampere/Hopper cards have far
+  # better fp16/bf16 tensor-core utilisation. Left on, but BENCHMARK IT on the
+  # cloud GPU before committing to a 40k-iteration run -- it is a one-command
+  # check and the difference is hours.
+  amp: true
+  grad_checkpoint: true
+  optimizer: adam

@@ -1,0 +1,70 @@
+# Tiny config for exercising the training loop end to end in seconds.
+# NOT a reproduction and NOT a model that can learn anything — every dimension
+# is cut to the smallest value that still keeps the paper's *structure* intact,
+# so plumbing bugs surface without waiting on a real run.
+#
+# What is deliberately preserved from the paper, because the loop depends on it:
+#   - the 10-layer dilated stack [1,2,4,8,16,1,2,4,8,16], so the unpadded time
+#     shrink and therefore the target centre-crop still apply
+#   - two noise draws per generator step (section 3.2.1)
+#   - the WGAN-GP + drift + L_profile objective
+#
+# What is NOT the paper: frame count (144 -> 20 instead of 336 -> 212), bins,
+# widths, batch size, and a 4-iteration schedule.
+name: smoke
+notes: >
+  Smoke-test config for .claude/rules/training.md. Runs the real Trainer on the
+  real objective at toy size. Any number produced by this config is meaningless.
+seed: 0
+
+stft:
+  n_fft: 128
+  hop: 32
+  n_bins: 64
+  scaling: signed_sqrt
+
+model:
+  early_ch: [4, 6]
+  conv4_out: 256 # 8 * 32
+  latent_ch: 8
+  latent_freq: 32 # MUST exceed max(dilations)=16 — was 8, which made
+  # the dilation-8 and dilation-16 layers single-tap in frequency, so
+  # the tests were exercising a structurally different model.
+  stack_ch: 16
+  noise_ch: 4
+  dilations: [1, 2, 4, 8, 16, 1, 2, 4, 8, 16]
+  critic_group_factor: 0.5 # [P] grouped convs, authors 6.2
+
+data:
+  root: /home/chris/thesis/data/mp3ml-waveform
+  bitrates: [16, 32, 64]
+  # The stack removes sum(2*d) = 124 frames, so segment_frames must exceed 124
+  # for the full dilation schedule to survive: 144 - 124 = 20 output frames.
+  segment_frames: 144
+  train_stems: [mixture, bass, drums, other, vocals]
+  eval_stems: [mixture]
+
+train:
+  iterations: 4
+  batch_size: 2
+  lr_g: 0.001
+  lr_d: 0.001
+  betas: [0.0, 0.99] # [P] authors
+  n_critic: 1 # [P] authors: 1:1 critic:generator
+  gp_weight: 5.0 # [P] authors
+  drift_weight: 0.5 # [P] authors
+  # Fidelity switches (REPRODUCTION.md 3.3). Both reproduce the ORIGINAL
+  # implementation's behaviour; the authors suggest flipping them for a robust
+  # modern baseline. recreate_optimizers makes Adam behave as sign-SGD.
+  recreate_optimizers: true
+  gp_reduction: sum
+  init: he
+  # [P] From the authors (REPRODUCTION.md 1.1): eq. 3's single theta was in
+  # fact two weights, and the frequency profile is weighted 10x the rhythm one.
+  profile_theta_freq: 1.0e-4
+  profile_theta_rhyt: 1.0e-5
+  profile_p_freq: 1.3
+  profile_p_rhyt: 1.6
+  amp: false
+  grad_checkpoint: false
+  optimizer: adam

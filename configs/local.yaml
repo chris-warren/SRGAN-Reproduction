@@ -1,0 +1,79 @@
+# Reduced variant for local development on an RTX 2070 Super (8 GB).
+# NOT a faithful reproduction — use only for shape/plumbing/overfit tests.
+# Every deviation from configs/faithful.yaml is a field below, so the gap is
+# explicit and can be reported.
+name: local
+notes: >
+  Development config for an 8 GB card. Deviates from the paper ONLY in
+  frequency resolution (512 vs 1024 bins), the frequency-collapse width
+  (conv4_out 1024 vs 4096), stack width (128 vs 256) and noise channels
+  (32 vs 64). The time structure is the paper's: 336 frames in, 212 out, batch
+  12, 40k-iteration schedule shortened to 2k for smoke runs.
+  Results from this config are NOT comparable to the paper.
+seed: 0
+
+stft:
+  n_fft: 1024
+  hop: 512
+  n_bins: 512
+  scaling: signed_sqrt
+
+model:
+  early_ch: [18, 38]
+  conv4_out: 1024       # 32 * 32
+  latent_ch: 32
+  # MUST stay > max(dilations) = 16, or the two dilation-16 stack layers see
+  # only their centre tap in frequency. Was 16 until 2026-10-07, which made
+  # those layers degenerate. latent_ch absorbs the change at the same
+  # conv4_out, so the cost is 51.3 M -> 50.8 M params: there was never a
+  # reason to reduce it. See REPRODUCTION.md §3.1.
+  latent_freq: 32
+  stack_ch: 128
+  noise_ch: 32
+  dilations: [1, 2, 4, 8, 16, 1, 2, 4, 8, 16]
+  critic_group_factor: 0.5 # [P] grouped convs, authors 6.2
+
+data:
+  root: /home/chris/thesis/data/mp3ml-waveform
+  bitrates: [16, 32, 64]
+  segment_frames: 336   # same as the paper: 4 s, and 336 -> 212 out
+  train_stems: [mixture, bass, drums, other, vocals]
+  eval_stems: [mixture]
+
+train:
+  iterations: 2000
+  batch_size: 4         # DEVIATION: paper uses 12; measured OOM above 6 on 8 GB
+  lr_g: 0.001
+  lr_d: 0.001
+  betas: [0.0, 0.99] # [P] authors
+  n_critic: 1 # [P] authors: 1:1 critic:generator
+  gp_weight: 5.0 # [P] authors
+  drift_weight: 0.5 # [P] authors
+  # Fidelity switches (REPRODUCTION.md 3.3). These reproduce the ORIGINAL
+  # implementation's behaviour. recreate_optimizers makes Adam behave as
+  # sign-SGD with step size exactly lr.
+  #
+  # These were set to `false` while training diverged. That divergence was NOT
+  # caused by them -- it was a missing equalized learning rate (1.2). With that
+  # fixed, all four survival cells run 250 steps, `true` included, so the
+  # faithful setting is back.
+  recreate_optimizers: true
+  gp_reduction: sum
+  init: he
+  # [P] From the authors (REPRODUCTION.md 1.1): eq. 3's single theta was in
+  # fact two weights, and the frequency profile is weighted 10x the rhythm one.
+  profile_theta_freq: 1.0e-4
+  profile_theta_rhyt: 1.0e-5
+  profile_p_freq: 1.3
+  profile_p_rhyt: 1.6
+  # MEASURED on the RTX 2070 Super (Turing), batch 4: amp makes this model
+  # SLOWER, not faster -- 19.6 s/step with amp vs 12.4 s/step without (and
+  # 7.8 GB peak vs 5.7 GB). We force the gradient penalty and the generator
+  # loss to fp32 for correctness, so autocast pays the casting cost on the
+  # expensive paths without buying fp16 throughput, and Conv4's 38 input
+  # channels are not a multiple of 8 so tensor cores likely never engage.
+  # This is a property of THIS card -- re-measure on the cloud GPU before
+  # assuming it holds there. See REPRODUCTION.md section 3.4.
+  amp: false
+  grad_checkpoint: true # measured slightly FASTER than false here (12.4 vs 14.1)
+  optimizer: adam

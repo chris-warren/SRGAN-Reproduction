@@ -1,0 +1,38 @@
+[project]
+name = "mp3ml"
+version = "0.1.0"
+description = "Dataset preparation for MP3 compression reversal"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "soundfile>=0.13",
+    "pyyaml>=6.0",
+    "torch>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+# Live experiment tracking. The durable record is always JSONL under
+# outputs/<run>/, so this is a viewer, not a dependency of the results.
+tracking = ["wandb>=0.17"]
+# Frechet Audio Distance: the distance itself is implemented in mp3ml.metrics
+# with no extra dependency, and the VGGish embedder loads through torch.hub,
+# so FAD needs no entry here. See mp3ml.fad.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

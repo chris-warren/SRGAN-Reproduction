@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Build products of the native LAME dumper
+native/lame_dump/mp3dump
+native/lame_dump/*.o
+
+# Local secrets (W&B API key). Never commit.
+.env
+
+# Generated data and run outputs
+outputs/
+*.npz
+*.mp3
+*.wav
+*.flac
+*.pcm
+*.bin
+
+# Pinned upstream LAME, fetched and built by native/lame_dump/setup_lame.sh
+third_party/
+
+# The paper itself. MDPI Electronics 2021, 10, 1349 is open access and the full
+# citation is in configs/REPRODUCTION.md; the extracted text we actually grep
+# against lives in outputs/experiments/paper.txt (also gitignored).
+2207.01667v1.pdf
