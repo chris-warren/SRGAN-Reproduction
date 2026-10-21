@@ -3,11 +3,17 @@
 # See DATASET.md for what the paper specifies vs what it leaves open.
 name: faithful
 notes: >
-  Table 1 as published. Unspecified by the paper and chosen here: batch size,
-  learning rate, optimiser and betas, n_critic, and the gradient-penalty weight.
-  gp_weight follows the authors' own DrumGAN config (lossMode WGANGP,
-  lambdaGP 10.0) rather than the literal Arjovsky citation — see
-  REPRODUCTION.md section 3.1.
+  Table 1 as published, and every training coefficient is now the authors' own.
+  This block previously called batch size, learning rate, betas, n_critic and
+  gp_weight "unspecified by the paper and chosen here", and said gp_weight
+  followed DrumGAN's lambdaGP 10.0. That is all out of date: the paper states
+  40,000 iterations, batch 12 and Adam at 1e-3, and the authors' email of
+  2026-09-29 settled betas (0, 0.99), n_critic 1, gp_weight 5.0,
+  drift_weight 0.5 and the two thetas. The values below are [P]; nothing in
+  this config is a free assumption except the two fidelity switches
+  (recreate_optimizers, gp_reduction). See REPRODUCTION.md section 1.1.
+  NOT YET RUN: this config has never been executed at any scale. Benchmark amp
+  and grad_checkpoint before committing to 40k iterations.
 seed: 0
 
 stft:

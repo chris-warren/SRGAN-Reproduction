@@ -88,6 +88,7 @@ class Tracker:
         self.cfg = cfg
         self.backend = backend
         self._wandb = None
+        self._backend_failures = 0
         self._started = time.time()
 
         if backend == "wandb":
@@ -130,6 +131,40 @@ class Tracker:
 
     # ------------------------------------------------------------------ log
 
+    #: Consecutive backend failures tolerated before the backend is dropped for
+    #: the rest of the run. Without a cap, a service that is down logs one
+    #: warning per step -- 40,000 of them over a faithful run.
+    _MAX_BACKEND_FAILURES = 10
+
+    def _emit(self, payload: dict[str, Any], step: int) -> None:
+        """Send one row to the backend, and **never** let it end the run.
+
+        This module's contract is that "a missing or broken backend degrades to
+        JSONL with a warning rather than killing a run". That held for
+        `wandb.init` but not for either `wandb.log` call site, and `log` runs on
+        every training step -- so one transient network error inside a logging
+        service could discard a multi-hour GPU run that was otherwise fine.
+        Found by code review 2026-10-21, before the first cluster run.
+        """
+        if self._wandb is None:
+            return
+        try:
+            self._wandb.log(payload, step=step)
+        except Exception as exc:  # noqa: BLE001
+            self._backend_failures += 1
+            logger.warning(
+                "backend log failed at step %s (%s); %s is unaffected",
+                step,
+                exc,
+                self.path.name,
+            )
+            if self._backend_failures >= self._MAX_BACKEND_FAILURES:
+                logger.warning(
+                    "dropping backend after %d failures; continuing with JSONL only",
+                    self._backend_failures,
+                )
+                self._wandb = None
+
     def log(self, metrics: dict[str, Any], step: int, phase: str = "train") -> None:
         """Record one row. `phase` is 'train', 'val' or 'test'.
 
@@ -147,8 +182,7 @@ class Tracker:
         with self.path.open("a") as f:
             f.write(json.dumps(row) + "\n")
 
-        if self._wandb is not None:
-            self._wandb.log({f"{phase}/{k}": v for k, v in clean.items()}, step=step)
+        self._emit({f"{phase}/{k}": v for k, v in clean.items()}, step)
 
     def log_audio(
         self, name: str, wav: torch.Tensor | np.ndarray, samplerate: int, step: int
@@ -172,7 +206,7 @@ class Tracker:
         if self._wandb is not None:
             import wandb
 
-            self._wandb.log({f"audio/{name}": wandb.Audio(data, sample_rate=samplerate)}, step=step)
+            self._emit({f"audio/{name}": wandb.Audio(data, sample_rate=samplerate)}, step)
 
     def log_table(self, name: str, report_table: str, step: int) -> None:
         """Log a rendered text table (e.g. `EvalReport.table()`) as an artifact."""

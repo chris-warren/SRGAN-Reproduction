@@ -1,0 +1,83 @@
+# Apollo-vs-SRGAN comparison: the paper's model, trained on Apollo's corpus.
+#
+# Identical to faithful.yaml except for the data source. The point is a
+# like-for-like comparison against Apollo (Li et al.), which requires both
+# models to see the same audio, so this reads `apollo_v1` directly and applies
+# MP3 at training time the way Apollo's own loader does.
+#
+# WHY 64 kbit/s AND NOTHING ELSE -- measured 2026-10-21, see mp3ml.apollo:
+#   Apollo generates 24/32/48/64/96/128; the paper uses 16/32/64.
+#   In MONO (this model is single-channel) LAME silently resamples below
+#   64 kbit/s: 24->16 kHz, 32->22.05 kHz, 48->32 kHz. That changes the
+#   degradation into something the paper never measured and doubles MP3's
+#   priming delay, which `apollo.verify_constant_delay` caught at 32 kbit/s.
+#   64 kbit/s is therefore the ONLY rate that is in Apollo's set, in the
+#   paper's set, and resample-free. A result here is comparable both ways.
+#
+# Deviations from Apollo, recorded rather than silently adopted:
+#   - channels: Apollo is stereo; this model is single-channel, so left and
+#     right are indexed as separate items (doubling the data) rather than
+#     changing Table 1.
+#   - normalisation: Apollo divides each pair by its larger peak. The paper
+#     specifies none, so none is applied.
+#   - alignment: Apollo's codec_simu leaves 7-15% of pairs misaligned (its own
+#     README). We trim MP3's constant priming delay and verify the residual is
+#     zero, so none of ours are.
+name: apollo64
+notes: >
+  Table 1 exactly, on Apollo's corpus at 64 kbit/s mono. Every training
+  coefficient is the authors' [P] value, as in faithful.yaml. NOT a
+  reproduction of the paper's Table 2 numbers -- different corpus (musdb18hq +
+  MoisesDB rather than the paper's chart dataset) and one bitrate only.
+seed: 0
+
+stft:
+  n_fft: 2048
+  hop: 512
+  n_bins: 1024
+  scaling: signed_sqrt
+
+model:
+  early_ch: [18, 38]
+  conv4_out: 4096
+  latent_ch: 128
+  latent_freq: 32
+  stack_ch: 256
+  noise_ch: 64
+  dilations: [1, 2, 4, 8, 16, 1, 2, 4, 8, 16]
+  critic_group_factor: 0.5
+
+data:
+  source: apollo
+  root: /media/chris/Seagate Portable Drive/data/processed/apollo_v1
+  bitrates: [64]
+  segment_frames: 336
+  # Apollo's stem vocabulary is the 11 MoisesDB names plus MUSDB's five.
+  # `mixture` exists in both; the rest are stems, which the paper uses as
+  # training augmentation.
+  train_stems: [mixture, bass, drums, other, vocals, guitar, piano, percussion,
+                bowed_strings, other_keys, other_plucked, wind]
+  eval_stems: [mixture]
+
+train:
+  iterations: 40000
+  batch_size: 12
+  lr_g: 0.001
+  lr_d: 0.001
+  betas: [0.0, 0.99]      # [P] authors
+  n_critic: 1             # [P] authors
+  gp_weight: 5.0          # [P] authors
+  drift_weight: 0.5       # [P] authors
+  recreate_optimizers: true
+  gp_reduction: sum
+  init: he
+  profile_theta_freq: 1.0e-4
+  profile_theta_rhyt: 1.0e-5
+  profile_p_freq: 1.3
+  profile_p_rhyt: 1.6
+  # BENCHMARK BOTH on the cluster before a 40k run; neither is measured on
+  # H100. On our Turing card amp was a 1.6x pessimisation, which does not
+  # transfer to Hopper.
+  amp: true
+  grad_checkpoint: true
+  optimizer: adam

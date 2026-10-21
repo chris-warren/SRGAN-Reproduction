@@ -11,13 +11,16 @@ G**." So both outputs feed the Wasserstein term as well, not only `L_profile`.
 
 Not stated by the paper, and therefore assumptions (REPRODUCTION.md §2):
 
-* `n_critic` — critic steps per generator step. 5 is the WGAN convention.
 * The critic's condition is the degraded input **centre-cropped** to G's output
   extent, so candidate and condition cover the same frames (§2.6, §6.1).
 * The critic sees one noise draw, not both; the paper ties the two draws to G's
   update only.
 * Critic and generator steps draw separate batches, as in Gulrajani's reference
   implementation.
+
+`n_critic` used to be listed above as an assumption ("5 is the WGAN
+convention"). It is **[P]** since the authors' email of 2026-09-29: the ratio is
+**1:1**, which is `TrainConfig.n_critic = 1`. Do not "restore" 5.
 * Mixed precision (`train.amp`). The paper says nothing about it; it is a
   memory concession for the local config, recorded as a deviation (§4).
 """
@@ -36,7 +39,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .config import ExperimentConfig, config_to_dict, target_crop
-from .data import WaveformPairs
+from .data import build_train_dataset
 from .losses import critic_step_loss, profile_loss, wasserstein_generator_loss
 from .models import Critic, Generator
 from .tracking import Tracker
@@ -419,7 +422,7 @@ class Trainer:
         num_workers: int = 4,
         eval_every: int = 0,
     ) -> None:
-        dataset = WaveformPairs(self.cfg, split="train")
+        dataset = build_train_dataset(self.cfg)
         loader = DataLoader(
             dataset,
             batch_size=self.cfg.train.batch_size,

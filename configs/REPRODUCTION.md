@@ -780,6 +780,121 @@ their relative level. We only scale int16 by 32768, so segment loudness varies
 freely. The paper specifies no normalisation, so this stays a **[A]** difference
 rather than a change.
 
+### 4e. [P] Verification pass — 2026-10-14
+
+Prompted by two measurement bugs in two days (§4c), every equation the paper
+states was re-derived from the paper text and checked against the code, rather
+than against its own docstring. This table records what has been **audited**, as
+distinct from merely written — the distinction matters, because every bug in §5
+lived in code that read correctly.
+
+| element | paper | verdict | asserted by |
+|---|---|---|---|
+| **eq. 5** LSD | §3.4.2 | **correct** — RMS over frequency *then* mean over frames, the asymmetric reduction implementations usually get wrong | `test_lsd_reduces_rms_over_frequency_then_mean_over_frames` |
+| **eq. 6** spectral MSE | §3.4.3 | **correct** — on `sqrt(P)`, not `P`; the paper's double mean is one `mean` over both axes | `test_spectral_mse_uses_sqrt_of_power_not_power` |
+| **eq. 7** SNR | §3.4.4 | **correct** — `10log10(‖s‖²/‖s−ŝ‖²)` exactly | `test_snr_matches_equation_7_by_hand` |
+| **eq. 3** `L_profile` | §3.2.1 | **correct** — the "Hadamard root" is `|X| = sqrt(P)`, i.e. `magnitude`, *not* `sqrt_magnitude` = `P^(1/4)`; axis sums match the paper's own wording ("frequency profiles summing over the time axis"); p = 1.3 / 1.6 | `tests/test_losses.py` |
+| `target_crop` **alignment** | §3.1.1 | **correct** — offset 62, measured against the model's real behaviour, not inferred | `test_target_crop_matches_the_generators_real_receptive_field` *(new)* |
+| **best-of-20** | §4.1 | **correct** — 20 draws, and the best taken **per metric independently**, which is what "we do not pick the sample with the best quality" requires | `test_best_of_n_respects_each_metric_direction` |
+
+**The crop test is new and the gap it closed is instructive.** The pre-existing
+`test_target_crop_is_centred` only checked that the offset was *symmetric* —
+it verified the config's arithmetic against itself. Nothing checked that 62 is
+what the generator actually removes. Had G's reduction been asymmetric, every
+loss would have been computed against a misaligned target, the loss would simply
+have been higher, and the model would have taken the blame. The new test
+measures by gradient which input frames influence each output frame.
+
+It also produced a number nobody had measured: **the generator's receptive field
+is 153 frames**, not the dilated stack's 125 — the early and late layers add
+time extent. That is worth knowing for §4b's observation that G must learn a
+near-identity through ~20 layers with no skip connection.
+
+**Lag estimation was the expected weak point and is not one.** It is the
+best-covered module here: 12 tests, including known injected shifts (0, 1, 137,
+2210 and a *negative* lag), both documented traps — a silent lead-in
+(`test_lag_is_measured_on_the_loudest_region_not_the_start`) and periodic bass
+(`test_periodic_content_needs_a_constrained_search`) — the boundary artefact
+where `argmax` returns `max_lag` and looks like an answer, silence raising
+rather than guessing, and real MP3 round-trips at each bitrate.
+
+**What this pass changes about where to look for bugs.** Six of the paper's
+equations and protocols were audited and all six were already right. The bugs
+that have actually cost time were *not* in the paper's maths — they were in the
+STFT inversion (§4c), in a reduced config's dimensions (§3.1), and in the
+batch-size coupling of two coefficients (§3.1). The pattern is that
+**faithfulness to the paper has held up; the surrounding numerical plumbing has
+not.** Future effort is better spent on the plumbing and on measurement
+instruments than on re-reading Table 1.
+
+### 4f. [D] The Apollo comparison run — 2026-10-21
+
+The next run trains the paper's model on **Apollo's corpus** rather than ours, so
+that this reproduction and the Apollo replication can be scored on identical
+audio. `configs/apollo64.yaml`; the reader is `mp3ml.apollo`.
+
+**Only 64 kbit/s is usable, and that was a measurement, not a choice.**
+
+| kbit/s (mono) | MP3 output rate | in Apollo | in the paper |
+|---|---|---|---|
+| 24 | 16 000 Hz — resampled | yes | no |
+| 32 | 22 050 Hz — resampled | yes | **yes** |
+| 48 | 32 000 Hz — resampled | yes | no |
+| **64** | **44 100 Hz — clean** | **yes** | **yes** |
+| 96, 128 | 44 100 Hz — clean | yes | no |
+
+Measured with `ffprobe` on real Apollo audio. Below 64 kbit/s **mono** LAME
+silently resamples — the CBR floor CLAUDE.md records — which makes the pair a
+different degradation from the one the paper measures, and changes MP3's priming
+delay. `apollo.verify_constant_delay` caught exactly that: after trimming the
+usual 1,105 samples, 32 kbit/s still had a **+1,105 residual lag**, because its
+true delay is 2,210. At 64 kbit/s the residual is 0.
+
+So 32 kbit/s is in both papers' bitrate sets and is still unusable, and
+**64 kbit/s is the only rate that is in Apollo's set, in the paper's set, and
+resample-free.** `degrade` raises on the rest rather than quietly producing
+misaligned pairs, and `test_comparable_bitrates_are_the_only_defensible_choice`
+fails if that reasoning ever stops holding.
+
+**Why the data cannot be used as it stands.** Apollo stores originals only —
+`hdf5_train/<stem>/*.hdf5` holds `"data": (n_windows, 2, 264600)` and its loader
+applies MP3 inside `__getitem__`. Our pipeline reads pre-aligned pairs, so the
+degraded half simply does not exist on disk. `ApolloPairs` therefore degrades at
+training time, as Apollo does. The **architecture is unchanged**; only the data
+layer is new.
+
+**Deviations from Apollo, taken deliberately:**
+
+| | Apollo | here | why |
+|---|---|---|---|
+| channels | stereo | left and right as separate items | the generator is single-channel — in a `(2, bins, frames)` spectrogram the 2 is real/imag. Splitting keeps Table 1 untouched and doubles the items |
+| normalisation | both signals / larger peak | none | the paper specifies none |
+| alignment | `match2` + `torch.roll`, leaving **7–15%** of pairs misaligned (Apollo's own README) | constant priming-delay trim, residual verified 0 | misalignment is invisible to LSD; importing a known 7–15% corruption would recreate the failure mode of §4c |
+| whole window | crops then degrades | degrades then crops | cropping first gives every segment an encoder start transient no real MP3 of a song has |
+
+**Measured cost of on-the-fly degradation** (this machine, 64 kbit/s): about
+**0.8 s per item** — HDF5 read 7 ms warm (379 ms cold from USB), 6 s window
+degrade 719 ms, two STFTs. At batch 12 that is ~9.5 CPU-seconds per step, so the
+**data pipeline, not the GPU, can set the floor**:
+
+| workers | s/step from data | 40 000 steps |
+|---|---|---|
+| 8 | 1.5 | 16.7 h |
+| 16 | 0.75 | 8.3 h |
+| 32 | 0.38 | 4.2 h |
+
+`scripts/bench_cluster.py` measures this alongside step time and peak memory,
+and says which side is binding. **Run it before committing to 40 000
+iterations** — and note it took two attempts to measure correctly: `DataLoader`
+prefetches `prefetch_factor * workers` batches and returns them in index order,
+so a short median reads the queue draining, not the pipeline producing, and
+reported 3,000 items/s against a known ~1.3.
+
+**Pre-building would remove that floor.** Degrading all 77,629 windows x 2
+channels once costs ~31 CPU-hours (about 2.6 h on 12 cores) and 82 GB per
+bitrate, against 1.1 TB free on the external drive. Over six models x 40,000
+steps that is overwhelmingly cheaper than paying 0.8 s per item per epoch.
+
 ## 5. [A] Errors worth remembering
 
 Kept deliberately: knowing which parts were hard to get right is information

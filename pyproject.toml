@@ -15,6 +15,10 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 # Live experiment tracking. The durable record is always JSONL under
 # outputs/<run>/, so this is a viewer, not a dependency of the results.
 tracking = ["wandb>=0.17"]
+# Reading the Apollo corpus (`data.source: apollo`), which is stored as HDF5.
+# Optional because the paper's own data path needs nothing beyond the core
+# dependencies — see mp3ml.apollo.
+apollo = ["h5py>=3.10"]
 # Frechet Audio Distance: the distance itself is implemented in mp3ml.metrics
 # with no extra dependency, and the VGGish embedder loads through torch.hub,
 # so FAD needs no entry here. See mp3ml.fad.

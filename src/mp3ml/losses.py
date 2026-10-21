@@ -92,11 +92,16 @@ def drift_penalty(real_scores: torch.Tensor, reduction: str = "sum") -> torch.Te
     The paper gives the term but not its coefficient; **[P] the authors supply
     0.5** (§6.2), far above the 1e-3 PGGAN default we had assumed.
 
-    **Reduced by `mean`, and that is an [A].** The authors told us the *gradient*
-    penalty was summed over the batch in the original code (§4.8) and said
-    nothing about this term. Summing it too would scale it by batch size, so the
-    two readings differ by 12x at the paper's batch. Recorded rather than
-    guessed; see REPRODUCTION.md §2.
+    **Reduced by `sum`**, matching `(predRealD[:,-1]**2).sum()` in the authors'
+    own code, which is also what `TrainConfig.drift_reduction` defaults to. The
+    authors confirmed the *gradient* penalty was summed (§4.8) and said nothing
+    about this term, so following the same convention is an **[I]**, not a
+    fact.
+
+    Because it is a sum against a mean-reduced Wasserstein term, its effective
+    weight scales with batch size: `drift_weight` 0.5 at the paper's batch 12
+    acts as 6.0, but as 2.0 at `local.yaml`'s batch 4. See REPRODUCTION.md §3.1
+    — this is a real consequence of reducing the batch, not a free choice.
     """
     squared = real_scores**2
     if reduction == "sum":

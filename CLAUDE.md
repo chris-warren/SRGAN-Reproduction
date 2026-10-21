@@ -66,6 +66,12 @@ LAME's pre-processed input rather than of the pristine original. Read
   (the open blocker: training diverges with `recreate_optimizers: true`)
 - Evaluate a checkpoint: `python scripts/evaluate.py CKPT --split test`
   (uses the paper's best-of-20 protocol; `--samples 1` is NOT comparable to Table 2)
+- Size the hardware before a long run: `python scripts/bench_cluster.py configs/apollo64.yaml --workers 16`
+  (step time, peak memory, and whether the GPU or the data pipeline is binding —
+  run it on the target card, never extrapolate from a development GPU)
+- Train on **Apollo's corpus** for the Apollo-vs-SRGAN comparison:
+  `python scripts/train.py configs/apollo64.yaml --bitrate 64 --tracker wandb --workers 16`
+  Needs the `apollo` extra (`pip install -e ".[apollo,dev]"`) for h5py.
 
 External tools assumed on PATH: `ffmpeg`, `lame`. There is no `mpg123` on this
 machine — use `ffmpeg` as the reference decoder.
@@ -129,6 +135,12 @@ machine — use `ffmpeg` as the reference decoder.
   evidence, in the same turn you find it. This is the trigger `.claude/rules/docs.md`
   cannot catch, because no file edit fires it. Findings that live only in the
   conversation are lost at the end of the session.
+- IMPORTANT: **64 kbps is the only bitrate usable for the Apollo comparison.**
+  Apollo generates 24/32/48/64/96/128 and the paper uses 16/32/64, but in mono
+  LAME resamples below 64 (24 -> 16 kHz, 32 -> 22.05 kHz, 48 -> 32 kHz), which
+  changes the degradation and doubles the priming delay. 32 kbps is in both sets
+  and still unusable. `mp3ml.apollo.degrade` raises on the rest; see
+  REPRODUCTION.md §4f.
 - IMPORTANT: the safe CBR floor depends on channel count — **64 kbps mono, but
   112 kbps stereo**. Below it LAME silently resamples (96k stereo -> 32 kHz, 64k
   stereo -> 24 kHz) and can switch to MPEG-2 LSF, changing what `xr` means.

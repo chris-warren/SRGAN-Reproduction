@@ -127,3 +127,17 @@ def expected_shapes(cfg: ExperimentConfig) -> dict[str, tuple[int, ...]]:
         "clean": (2, bins, output_frames(cfg)),
         "clean_full": (2, bins, frames),
     }
+
+
+def build_train_dataset(cfg: ExperimentConfig):
+    """The training Dataset named by `cfg.data.source`.
+
+    Both options return the same item contract, so the Trainer does not care
+    which corpus it is reading — `ApolloPairs` exists so this reproduction and
+    the Apollo replication can be scored on identical audio.
+    """
+    if cfg.data.source == "apollo":
+        from .apollo import ApolloPairs
+
+        return ApolloPairs(cfg, split="train")
+    return WaveformPairs(cfg, split="train")

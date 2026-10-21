@@ -68,6 +68,41 @@ def test_a_broken_backend_degrades_to_jsonl(tmp_path: Path, monkeypatch) -> None
     assert len(read_jsonl(tmp_path / "run")) == 1
 
 
+def test_a_backend_that_breaks_mid_run_does_not_kill_the_run(tmp_path: Path) -> None:
+    """The realistic cluster failure: init succeeds, then the network drops.
+
+    `test_a_broken_backend_degrades_to_jsonl` only covers `wandb.init` raising
+    at startup. But `log` runs on *every* training step, so a transient error
+    at step 12,000 of a 40,000-step run would propagate out of the training
+    loop and discard hours of GPU time -- which is the opposite of this
+    module's stated contract. Both `wandb.log` call sites were unguarded until
+    2026-10-21.
+    """
+
+    class Exploding:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def log(self, *_args, **_kwargs):
+            self.calls += 1
+            raise RuntimeError("connection reset")
+
+    t = Tracker(tmp_path / "run", CFG, backend="none")
+    fake = Exploding()
+    t._wandb = fake  # a backend that initialised fine and then broke
+
+    for step in range(1, 26):
+        t.log({"d_loss": float(step)}, step=step)  # must not raise
+
+    rows = read_jsonl(tmp_path / "run")
+    assert len(rows) == 25, "JSONL must record every step regardless of the backend"
+    assert [r["d_loss"] for r in rows] == [float(s) for s in range(1, 26)]
+    # Dropped after the failure cap rather than warning once per step for the
+    # rest of a 40k-step run.
+    assert fake.calls == Tracker._MAX_BACKEND_FAILURES
+    assert t._wandb is None
+
+
 def test_unknown_backend_is_rejected_early(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unknown backend"):
         Tracker(tmp_path / "run", CFG, backend="mlflow")

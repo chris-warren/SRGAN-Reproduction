@@ -250,13 +250,20 @@ def _fad_scores(pools: dict[str, list[torch.Tensor]], report: EvalReport) -> dic
     from . import fad
     from .metrics import frechet_distance
 
+    # The whole computation is best-effort, not just the embedding step. FAD
+    # needs at least two samples per set and VGGish emits roughly one frame per
+    # 0.96 s, so a short config or a small `max_items` leaves fewer rows than
+    # `frechet_distance` accepts -- and it raises. That used to happen *outside*
+    # this try, discarding every per-item metric already accumulated by the
+    # caller rather than degrading to a report without FAD (code review,
+    # 2026-10-21).
     try:
         emb = {k: fad.embed(torch.cat(v, dim=0)) for k, v in pools.items()}
-    except Exception as exc:  # noqa: BLE001 - embedding is best-effort
-        logger.warning("FAD embedding failed: %s", exc)
-        report.skipped.append(f"fad — embedding failed: {exc}")
+        return {
+            "fad/model": float(frechet_distance(emb["clean"], emb["model"])),
+            "fad/mp3": float(frechet_distance(emb["clean"], emb["mp3"])),
+        }
+    except Exception as exc:  # noqa: BLE001 - FAD is an extra, never the report
+        logger.warning("FAD skipped: %s", exc)
+        report.skipped.append(f"fad — {exc}")
         return {}
-    return {
-        "fad/model": float(frechet_distance(emb["clean"], emb["model"])),
-        "fad/mp3": float(frechet_distance(emb["clean"], emb["mp3"])),
-    }
