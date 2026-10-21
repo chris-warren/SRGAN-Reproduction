@@ -33,10 +33,24 @@ model:
   critic_group_factor: 0.5 # [P] grouped convs, authors 6.2
 
 data:
-  root: /home/chris/thesis/data/mp3ml-waveform
-  bitrates: [16, 32, 64]
+  # The Apollo corpus is the only one used, so this reproduction and the Apollo
+  # replication are scored on identical audio.
+  source: apollo
+  root: /media/chris/Seagate Portable Drive/data/processed/apollo_v1
+  # WHY 64 kbit/s AND NOTHING ELSE -- measured 2026-10-21, see mp3ml.apollo:
+  #   Apollo generates 24/32/48/64/96/128; the paper uses 16/32/64.
+  #   This generator is single-channel, and in MONO LAME silently resamples
+  #   below 64 kbit/s: 24 -> 16 kHz, 32 -> 22.05 kHz, 48 -> 32 kHz. That makes
+  #   the pair a different degradation from the paper's and doubles MP3's
+  #   priming delay, which apollo.verify_constant_delay caught at 32 kbit/s as
+  #   a +1105 residual lag. So 64 kbit/s is the ONLY rate in both sets that is
+  #   also resample-free, and a result there is comparable in both directions.
+  #   16 kbit/s -- the paper's headline case -- is absent from this corpus.
+  bitrates: [64]
   segment_frames: 336   # 4 s at 44.1 kHz, hop 512
-  train_stems: [mixture, bass, drums, other, vocals]
+  # Apollo's stem vocabulary: MUSDB's five plus MoisesDB's eleven.
+  train_stems: [mixture, bass, drums, other, vocals, guitar, piano, percussion,
+                bowed_strings, other_keys, other_plucked, wind]
   eval_stems: [mixture]
 
 train:

@@ -162,11 +162,22 @@ def test_frechet_distance_rejects_unusable_input() -> None:
 
 def test_single_bitrate_narrows_and_renames() -> None:
     """§2.10: the paper trains one model per rate. The rename keeps run
-    directories from colliding across the three runs."""
-    cfg = single_bitrate(CFG, 32)
+    directories from colliding across runs.
+
+    Builds its own multi-rate config rather than reading one from `configs/`:
+    the shipped ones now carry a single rate, because only 64 kbit/s of the
+    Apollo corpus is usable in mono (see `mp3ml.apollo`), and a test of
+    `single_bitrate` should not depend on that.
+    """
+    import dataclasses
+
+    multi = dataclasses.replace(
+        CFG, data=dataclasses.replace(CFG.data, bitrates=(16, 32, 64))
+    )
+    cfg = single_bitrate(multi, 32)
     assert cfg.data.bitrates == (32,)
     assert cfg.name == "smoke_32k"
-    assert CFG.data.bitrates == (16, 32, 64), "must not mutate the original"
+    assert multi.data.bitrates == (16, 32, 64), "must not mutate the original"
 
 
 def test_single_bitrate_rejects_a_rate_the_config_lacks() -> None:

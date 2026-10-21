@@ -36,12 +36,13 @@ model:
   critic_group_factor: 0.5 # [P] grouped convs, authors 6.2
 
 data:
-  root: /home/chris/thesis/data/mp3ml-waveform
-  bitrates: [16, 32, 64]
+  source: apollo
+  root: /media/chris/Seagate Portable Drive/data/processed/apollo_v1
+  bitrates: [64]      # the only mono-safe rate Apollo has; see faithful.yaml
   # The stack removes sum(2*d) = 124 frames, so segment_frames must exceed 124
   # for the full dilation schedule to survive: 144 - 124 = 20 output frames.
   segment_frames: 144
-  train_stems: [mixture, bass, drums, other, vocals]
+  train_stems: [mixture, vocals]
   eval_stems: [mixture]
 
 train:

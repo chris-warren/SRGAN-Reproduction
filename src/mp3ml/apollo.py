@@ -221,7 +221,7 @@ def verify_constant_delay(
     Returns `{bitrate: residual_lag}`. Any nonzero value means `degrade` is
     producing misaligned pairs and must not be used for training.
     """
-    from .waveform import estimate_lag
+    from .align import estimate_lag
 
     clean_i16 = np.clip(pcm * 32768.0, -32768, 32767).astype(np.int16)
     residuals = {}
@@ -329,4 +329,119 @@ class ApolloPairs:
             "clean": clean_full[..., lo:hi],
             "clean_full": clean_full,
             "bitrate": torch.tensor(rate),
+        }
+
+
+def read_eval_manifest(root: Path, split: str) -> list[dict]:
+    """Per-clip metadata for an evaluation split, as written by `make_eval_set`.
+
+    Carries `bitrate_kbps`, `residual_lag_samples` and `aligned` per clip, which
+    is what makes these pairs usable despite `codec_simu` leaving some of them
+    out of step.
+    """
+    import csv
+
+    name = {"val": "eval/val_manifest.csv", "test": "test/test_manifest.csv"}
+    if split not in name:
+        raise ValueError(f"split must be 'val' or 'test', got {split!r}")
+    with (root / name[split]).open() as f:
+        return list(csv.DictReader(f))
+
+
+class ApolloEvalPairs:
+    """Apollo's packed (original, codec) evaluation clips, one bitrate at a time.
+
+    These are the clips Apollo itself is scored on, so metrics computed here are
+    directly comparable to its published numbers. Unlike the training set they
+    are already pairs, so nothing is encoded at read time.
+
+    **The recorded residual lag is corrected, not filtered.** Apollo's
+    `codec_simu` re-aligns with `match2` and leaves roughly 7-15% of clips out
+    of step — at 64 kbit/s, 1 of 50 validation clips, off by exactly the full
+    `MP3_PRIMING_DELAY` because `match2` returned 0. The generator pipeline
+    measured and stored each clip's `residual_lag_samples`, so shifting by it
+    recovers every clip correctly aligned instead of discarding 2% of an
+    already small set. Pass `aligned_only=True` to drop them instead, which is
+    what Apollo's own `test.py` reports as its `aligned:*` rows.
+
+    Items match `mp3ml.data`'s contract, and crops are **fixed**: an evaluation
+    that moves its window cannot compare two checkpoints.
+    """
+
+    def __init__(
+        self,
+        cfg,
+        split: str = "val",
+        bitrate: int | None = None,
+        aligned_only: bool = False,
+        max_clips: int | None = None,
+    ) -> None:
+        from .config import segment_samples, target_crop
+
+        root = Path(cfg.data.root)
+        rate = bitrate if bitrate is not None else cfg.data.bitrates[0]
+        manifest = read_eval_manifest(root, split)
+        self.rows = [
+            (i, r)
+            for i, r in enumerate(manifest)
+            if int(r["bitrate_kbps"]) == rate and (not aligned_only or int(r["aligned"]) == 1)
+        ]
+        if not self.rows:
+            raise ValueError(
+                f"no {split} clips at {rate} kbit/s"
+                + (" that are aligned" if aligned_only else "")
+                + f"; manifest has {sorted({int(r['bitrate_kbps']) for r in manifest})}"
+            )
+        if max_clips is not None:
+            self.rows = self.rows[:max_clips]
+        self.cfg = cfg
+        self.split = split
+        self.rate = rate
+        self.seg_samples = segment_samples(cfg)
+        self.crop = target_crop(cfg)
+        self._path = root / {"val": "eval/val.hdf5", "test": "test/test.hdf5"}[split]
+        self._h5 = None
+        # Two channels per clip, indexed separately: the generator is
+        # single-channel (see this module's docstring).
+        self.n_channels = 2
+
+    def __len__(self) -> int:
+        return len(self.rows) * self.n_channels
+
+    def __getitem__(self, i: int) -> dict:
+        import h5py
+        import torch
+
+        from .stft import stft
+
+        row_i, channel = divmod(i, self.n_channels)
+        index, row = self.rows[row_i]
+        if self._h5 is None:  # opened lazily so each worker gets its own handle
+            self._h5 = h5py.File(self._path, "r")
+        ori = np.asarray(self._h5["ori"][index, channel], dtype=np.float32)
+        codec = np.asarray(self._h5["codec"][index, channel], dtype=np.float32)
+
+        lag = int(row["residual_lag_samples"])
+        if lag:
+            codec = np.roll(codec, -lag)
+            codec[-lag:] = 0.0 if lag > 0 else codec[-lag:]
+
+        # Centre crop: fixed, and away from both ends so neither the encoder's
+        # start transient nor any roll wrap-around lands in the scored window.
+        start = max((len(ori) - self.seg_samples) // 2, 0)
+        sl = slice(start, start + self.seg_samples)
+        s = self.cfg.stft
+        to_spec = lambda a: stft(  # noqa: E731
+            torch.from_numpy(np.ascontiguousarray(a[sl])).float(),
+            n_fft=s.n_fft,
+            hop=s.hop,
+            n_bins=s.n_bins,
+        )
+        clean_full, degraded = to_spec(ori), to_spec(codec)
+        lo, hi = self.crop
+        return {
+            "degraded": degraded,
+            "clean": clean_full[..., lo:hi],
+            "clean_full": clean_full,
+            "bitrate": torch.tensor(self.rate),
         }

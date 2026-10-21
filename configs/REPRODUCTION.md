@@ -13,7 +13,10 @@ eventually came from, and what we chose to do differently on purpose.
 * Completeness — proof that nothing in the paper was *missed* — is
   `COVERAGE.md`, which maps all 89 normative statements onto code or a recorded
   decision.
-* Dataset-side provenance is `../DATASET.md`.
+* Dataset-side provenance is §4f, and the Apollo corpus's own README
+  beside the data. The earlier granule-pair and waveform-pair phases, with
+  their `DATASET.md`, moved to `/home/chris/thesis/mdct-granule-pairs` on
+  2026-10-21 (tag `mdct-granule-phase`).
 * There is **no official implementation**. The Data Availability Statement
   covers audio examples only, and the arXiv preprint is textually identical to
   the journal version.
@@ -739,7 +742,7 @@ implementation.
 **On alignment, we are ahead of them, which was not the expected answer.** Their
 `match2` (`look2hear/datas/musdb_moisesdb_datamodule.py`) is GCC-PHAT: whiten
 the cross-power spectrum, `argmax` the inverse transform, then
-`torch.roll(wav_encdec, -tau)`. Compared with `mp3ml.waveform.estimate_lag`:
+`torch.roll(wav_encdec, -tau)`. Compared with `mp3ml.align.estimate_lag`:
 
 | | Apollo | ours |
 |---|---|---|
@@ -748,7 +751,7 @@ the cross-power spectrum, `argmax` the inverse transform, then
 | periodic material | unguarded | constrained search around `expected_lag`; a 49 Hz bass note has autocorrelation 0.984 at its period, so an unconstrained `argmax` picks between cycles arbitrarily |
 | silence | returns garbage silently | raises `SilentAudioError` |
 | boundary artefact | unguarded | `max_lag` capped at `size // 4`, or `argmax` returns `max_lag` and that looks like an answer |
-| consistency check | none | `verify_waveform_dataset.py` requires the lag to be identical for every track at a bitrate |
+| consistency check | none | `apollo.verify_constant_delay` requires a zero residual, and `ApolloEvalPairs` corrects the per-clip lag the manifest records |
 | applying the shift | `torch.roll` — **circular**, wrapping the tail into the head | trim |
 
 So Apollo offers no fix here; it confirms the problem is real and universal, and
@@ -894,6 +897,43 @@ reported 3,000 items/s against a known ~1.3.
 channels once costs ~31 CPU-hours (about 2.6 h on 12 cores) and 82 GB per
 bitrate, against 1.1 TB free on the external drive. Over six models x 40,000
 steps that is overwhelmingly cheaper than paying 0.8 s per item per epoch.
+
+### 4g. [D] Scope narrowed to SR-GAN on Apollo's corpus — 2026-10-21
+
+The repository was refocused to reproduce Lattner & Nistal alone, training
+exclusively from the Apollo corpus. Two earlier phases moved out to
+`/home/chris/thesis/mdct-granule-pairs` (its own README and git history; the
+last commit here containing them is tagged `mdct-granule-phase`):
+
+* **Granule pairs** — LAME's pre-quantization `xr[576]` against the decoder's
+  dequantized `xr_hat[576]`, read from the encoder's analysis path by a C
+  dumper. The original thesis premise and a strictly tighter pairing than any
+  waveform comparison, but this model operates on STFT spectrograms, so the
+  granules were never its input.
+* **Waveform pairs** — our own pre-aligned (clean, degraded) corpus, which fed
+  this reproduction until the Apollo comparison required a shared corpus. The
+  built 58 GB dataset still exists at `/home/chris/thesis/data/mp3ml-waveform`
+  and is **the only data here containing 16 kbit/s**, which Apollo's corpus
+  lacks — so it is the only route to the paper's headline compression rate if
+  that becomes necessary again.
+
+Neither was defective. What changed is the question being asked.
+
+**What survived, and why.** `align.py` keeps `estimate_lag` out of the archived
+`waveform.py`, because `apollo.verify_constant_delay` needs it to *prove* the
+constant priming-delay trim aligns a pair rather than assuming it. The two traps
+it encodes are tested here (`test_align.py`): a silent lead-in defeats
+cross-correlation, and periodic bass defeats it differently — a 49 Hz note has
+autocorrelation 0.984 at its period, and **GCC-PHAT makes that case worse**
+because whitening amplifies phase in the empty bands a bass stem mostly consists
+of. Apollo's own `match2` is GCC-PHAT, which is part of why it misaligns 7–15%
+of its pairs.
+
+**Consequences for Table 2.** Reaching it now needs six models at rates this
+corpus cannot supply: 16 kbit/s is absent, and 32 kbit/s resamples in mono
+(§4f). At 64 kbit/s a result is comparable to Apollo *and* to the paper's
+64 kbit/s column, which is the one column this setup can honestly claim.
+`COVERAGE.md` row 66 is marked **PARTIAL** accordingly.
 
 ## 5. [A] Errors worth remembering
 

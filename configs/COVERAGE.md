@@ -36,7 +36,7 @@ extract. The paper is CC BY (MDPI open access).
 | # | Paper says | Status | Where |
 |---|---|---|---|
 | 1 | GAN with generator G and critic D | DONE | `models.Generator`, `models.Critic` |
-| 2 | G input: MP3 spectrogram `y`, non-linearly scaled complex STFT | DONE | `data.WaveformPairs` · `test_data` |
+| 2 | G input: MP3 spectrogram `y`, non-linearly scaled complex STFT | DONE | `apollo.ApolloPairs` · `test_data` |
 | 3 | G outputs restored `x̂` approximating original `x` | DONE | `test_config::faithful_config_reproduces_table_1_exactly` |
 | 4 | D distinguishes `x̂` from `x` | DONE | `test_losses` |
 | 5 | "In addition to the true/fake data, **D also receives the MP3 versions**" | DONE | **[P] authors §6.2**: channel-wise concat, 8 channels · `test_models::critic_takes_eight_channels_in_two_groups` |
@@ -129,10 +129,10 @@ extract. The paper is CC BY (MDPI open access).
 
 | # | Paper says | Status | Where |
 |---|---|---|---|
-| 63 | Pairs of MP3 and high-quality 44.1 kHz | DONE | `DATASET.md` |
+| 63 | Pairs of MP3 and high-quality 44.1 kHz | DONE | `apollo.py` · REPRODUCTION.md §4f |
 | 64 | "~64 hours of Nr 1 songs of the US charts 1950–2020" | **[D]** | musdb18hq, 47 h — §4.2 |
-| 65 | "**LAME** MP3 codec, version **3.100**" | DONE | `DATASET.md` · `encode.py` |
-| 66 | "16kbit/s, 32kbit/s and 64kbit/s **mono**" | DONE | `DATASET.md` (mono confirmed) |
+| 65 | "**LAME** MP3 codec, version **3.100**" | DONE | `apollo.degrade` (CBR via the `lame` CLI) |
+| 66 | "16kbit/s, 32kbit/s and 64kbit/s **mono**" | **PARTIAL** | mono confirmed, but Apollo's corpus has no 16 kbit/s and only 64 is resample-free in mono — REPRODUCTION.md §4f |
 | 67 | Split "**80%, 10%, 10%**" train/eval/test | **[D]** | 59/6/35, musdb's canonical test split — §4.4 |
 | 68 | "4-second-long segments with **50% overlap** for training and validation" | **[D]** | random offsets — §4.4 |
 | 69 | "For the **subjective** evaluation, we split the songs into segments of **8 seconds**" | **[D]** | tied to #81 — MOS not run |

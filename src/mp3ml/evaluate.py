@@ -41,8 +41,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from . import peaq
+from .apollo import ApolloEvalPairs
 from .config import ExperimentConfig, target_crop
-from .data import WaveformPairs
 from .metrics import (
     HIGHER_IS_BETTER,
     lsd,
@@ -154,13 +154,20 @@ def evaluate(
     max_items: int | None = None,
     with_peaq: bool | None = None,
     with_fad: bool | None = None,
-    stems: tuple[str, ...] | None = None,
+    bitrate: int | None = None,
+    aligned_only: bool = False,
     seed: int | None = 0,
 ) -> EvalReport:
     """Score `generator` on `split` using the §4.1 best-of-N protocol.
 
-    `stems` defaults to `cfg.data.eval_stems` (mixtures only) — stems are
-    training augmentation, and evaluating on them would not be comparable.
+    Reads Apollo's packed evaluation clips, so these numbers are comparable to
+    Apollo's published ones as well as to the paper's Table 2. `bitrate`
+    defaults to the config's first rate; one rate at a time, because the paper
+    trains one model per rate (§1.3).
+
+    `aligned_only` drops the clips Apollo's `codec_simu` left out of step
+    instead of correcting them from the manifest's recorded lag. Correcting is
+    the default and keeps the whole set — see `ApolloEvalPairs`.
     """
     from . import fad
     from .train import sample_noise  # local import: avoids a cycle
@@ -197,9 +204,11 @@ def evaluate(
         n_samples = 1
         report.n_samples = 1
 
-    # random_crop=False: a benchmark must score the same audio every run, or
+    # Fixed centre crops: a benchmark must score the same audio every run, or
     # two checkpoints cannot be compared and no number is reproducible.
-    dataset = WaveformPairs(cfg, split=split, stems=stems or cfg.data.eval_stems, random_crop=False)
+    dataset = ApolloEvalPairs(
+        cfg, split=split, bitrate=bitrate, aligned_only=aligned_only, max_clips=max_items
+    )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     lo, hi = target_crop(cfg)
 

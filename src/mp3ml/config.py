@@ -101,16 +101,20 @@ class DataConfig:
     #: Stems are training augmentation; evaluate on mixtures only.
     train_stems: tuple[str, ...] = ("mixture", "bass", "drums", "other", "vocals")
     eval_stems: tuple[str, ...] = ("mixture",)
-    #: Which on-disk dataset to read. `"waveform"` is this project's own
-    #: pre-aligned (clean, degraded) pairs from `scripts/build_waveform_dataset.py`.
-    #: `"apollo"` reads the Apollo preprocessed corpus and applies MP3 at
-    #: training time, so the two models can be compared on identical audio —
-    #: see `mp3ml.apollo`, which also documents why only 64 kbit/s is usable.
-    source: str = "waveform"
+    #: The corpus to read. Only `"apollo"` is supported: the reproduction trains
+    #: exclusively from the Apollo corpus so that it and the Apollo replication
+    #: can be scored on identical audio. The field is kept rather than removed
+    #: so configs say which corpus they mean, and so a typo fails at load.
+    #: `mp3ml.apollo` documents why only 64 kbit/s of its six rates is usable.
+    source: str = "apollo"
 
     def __post_init__(self) -> None:
-        if self.source not in ("waveform", "apollo"):
-            raise ValueError(f"data.source must be 'waveform' or 'apollo', got {self.source!r}")
+        if self.source != "apollo":
+            raise ValueError(
+                f"data.source must be 'apollo', got {self.source!r}. The "
+                "'waveform' path moved to /home/chris/thesis/mdct-granule-pairs "
+                "on 2026-10-21."
+            )
 
 
 @dataclass

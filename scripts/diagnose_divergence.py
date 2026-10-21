@@ -29,7 +29,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from mp3ml.config import load_config, single_bitrate
-from mp3ml.data import WaveformPairs
+from mp3ml.data import build_train_dataset
 from mp3ml.train import Trainer
 
 BASE = single_bitrate(load_config(Path("configs/local.yaml")), 16)
@@ -41,7 +41,7 @@ def bench(label, mutate):
     cfg = copy.deepcopy(BASE)
     mutate(cfg)
     cfg.train.gp_divergence_patience = 10**9
-    ds = WaveformPairs(cfg, split="train")
+    ds = build_train_dataset(cfg)
     loader = DataLoader(
         ds,
         batch_size=cfg.train.batch_size,

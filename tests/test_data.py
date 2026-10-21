@@ -1,126 +1,148 @@
-"""Checks on the training Dataset. Needs the built corpus; skips without it."""
+"""The training Dataset's contract, against a synthetic Apollo tree.
 
-from pathlib import Path
+Builds a miniature `apollo_v1` layout in `tmp_path` rather than touching the
+real 273 GB corpus, so these stay fast and runnable anywhere — the project's
+test rule. The real corpus is exercised only by the benchmark script.
+"""
 
+import shutil
+
+import numpy as np
 import pytest
 import torch
 
-from mp3ml.config import load_config, output_frames, target_crop
-from mp3ml.data import WaveformPairs, expected_shapes
+h5py = pytest.importorskip("h5py", reason="needs the `apollo` extra")
 
-CONFIG = Path(__file__).resolve().parents[1] / "configs" / "faithful.yaml"
-CFG = load_config(CONFIG)
+from mp3ml.apollo import WINDOW_SAMPLES, ApolloPairs, index_windows  # noqa: E402
+from mp3ml.config import load_config, output_frames  # noqa: E402
+from mp3ml.data import expected_shapes  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    not (CFG.data.root / "index.json").exists(),
-    reason="waveform dataset not built — run scripts/build_waveform_dataset.py",
+CONFIG_DIR = __import__("pathlib").Path(__file__).resolve().parents[1] / "configs"
+
+needs_codec = pytest.mark.skipif(
+    shutil.which("lame") is None or shutil.which("ffmpeg") is None,
+    reason="needs lame and ffmpeg on PATH",
 )
 
 
-@pytest.fixture(scope="module")
-def train() -> WaveformPairs:
-    return WaveformPairs(CFG, split="train")
+@pytest.fixture
+def apollo_root(tmp_path):
+    """A two-stem, few-window Apollo tree with real broadband audio."""
+    rng = np.random.default_rng(0)
+    t = np.arange(WINDOW_SAMPLES) / 44100
+    for stem, n_files, n_windows in (("vocals", 2, 3), ("mixture", 1, 2)):
+        d = tmp_path / "hdf5_train" / stem
+        d.mkdir(parents=True)
+        for f in range(n_files):
+            data = np.empty((n_windows, 2, WINDOW_SAMPLES), dtype=np.float32)
+            for w in range(n_windows):
+                for c in range(2):
+                    x = 0.3 * np.sin(2 * np.pi * (220 + 40 * w + 7 * c) * t)
+                    x += 0.05 * rng.standard_normal(WINDOW_SAMPLES)
+                    data[w, c] = np.clip(x, -1, 1)
+            with h5py.File(d / f"synthetic__track{f}__{stem}.hdf5", "w") as h:
+                h.create_dataset("data", data=data)
+    return tmp_path
 
 
-def test_shapes_match_the_config(train: WaveformPairs) -> None:
-    item = train[0]
-    for key, want in expected_shapes(CFG).items():
-        assert tuple(item[key].shape) == want, key
+@pytest.fixture
+def cfg(apollo_root):
+    """The smoke config, pointed at the synthetic tree."""
+    import dataclasses
+
+    c = load_config(CONFIG_DIR / "smoke.yaml")
+    return dataclasses.replace(
+        c,
+        data=dataclasses.replace(
+            c.data,
+            source="apollo",
+            root=apollo_root,
+            bitrates=(64,),
+            train_stems=("vocals", "mixture"),
+        ),
+    )
 
 
-def test_target_is_the_centre_crop_not_the_front(train: WaveformPairs) -> None:
-    """§2.6: G's output is centred on its input, so a front crop would offset
-    target from prediction by 62 frames (~0.7 s) — silent, and invisible to
-    magnitude-only metrics."""
-    item = train[0]
-    lo, hi = target_crop(CFG)
-    assert torch.equal(item["clean"], item["clean_full"][..., lo:hi])
-    assert not torch.equal(item["clean"], item["clean_full"][..., : hi - lo])
+def test_index_covers_every_window_and_channel(cfg) -> None:
+    """2 vocals files x 3 windows + 1 mixture file x 2 windows, both channels."""
+    assert len(index_windows(cfg.data.root)) == (2 * 3 + 1 * 2) * 2
 
 
-def test_offsets_vary_between_reads(train: WaveformPairs) -> None:
-    """The dataset stores whole tracks so chunk boundaries can differ every
-    epoch. A previous version seeded from torch.initial_seed(), constant within
-    a process, so every read returned the identical window."""
-    sums = {train[0]["degraded"].sum().item() for _ in range(4)}
-    assert len(sums) == 4, "offset sampling is not random"
+def test_index_can_be_restricted_to_stems(cfg) -> None:
+    only = index_windows(cfg.data.root, stems=("mixture",))
+    assert len(only) == 1 * 2 * 2
+    assert {w.stem for w in only} == {"mixture"}
 
 
-def test_offsets_are_reproducible_from_a_seed(train: WaveformPairs) -> None:
-    torch.manual_seed(7)
-    first = train[0]["degraded"].sum().item()
-    torch.manual_seed(7)
-    assert train[0]["degraded"].sum().item() == first
+def test_index_rejects_a_different_window_length(cfg, tmp_path) -> None:
+    """A changed `apollo_v1` revision must fail loudly, not silently mis-crop."""
+    d = cfg.data.root / "hdf5_train" / "wrong"
+    d.mkdir(parents=True)
+    with h5py.File(d / "synthetic__bad__wrong.hdf5", "w") as h:
+        h.create_dataset("data", data=np.zeros((1, 2, 1000), dtype=np.float32))
+    with pytest.raises(ValueError, match="samples per window"):
+        index_windows(cfg.data.root, stems=("wrong",))
 
 
-def test_splits_are_disjoint_by_track() -> None:
-    """Leakage check: no track may appear in two splits."""
-    tracks = {
-        split: {e["track"] for e in WaveformPairs(CFG, split=split).entries}
-        for split in ("train", "val", "test")
-    }
-    assert not tracks["train"] & tracks["val"]
-    assert not tracks["train"] & tracks["test"]
-    assert not tracks["val"] & tracks["test"]
+def test_rejects_bitrates_that_resample(cfg) -> None:
+    import dataclasses
+
+    bad = dataclasses.replace(cfg, data=dataclasses.replace(cfg.data, bitrates=(32,)))
+    with pytest.raises(ValueError, match="resample"):
+        ApolloPairs(bad)
 
 
-def test_eval_split_can_be_restricted_to_mixtures() -> None:
-    """Stems are training augmentation; evaluation uses mixtures only."""
-    ds = WaveformPairs(CFG, split="test", stems=CFG.data.eval_stems)
-    assert {e["stem"] for e in ds.entries} == {"mixture"}
+def test_rejects_a_non_training_split(cfg) -> None:
+    with pytest.raises(ValueError, match="hdf5_train"):
+        ApolloPairs(cfg, split="val")
 
 
-def test_batches_are_finite_and_correctly_shaped(train: WaveformPairs) -> None:
-    from torch.utils.data import DataLoader
-
-    batch = next(iter(DataLoader(train, batch_size=4, shuffle=True)))
-    assert batch["degraded"].shape == (4, 2, CFG.stft.n_bins, CFG.data.segment_frames)
-    assert batch["clean"].shape == (4, 2, CFG.stft.n_bins, output_frames(CFG))
-    assert torch.isfinite(batch["degraded"]).all()
-    assert torch.isfinite(batch["clean"]).all()
+@needs_codec
+def test_shapes_match_the_config(cfg) -> None:
+    item = ApolloPairs(cfg)[0]
+    for name, shape in expected_shapes(cfg).items():
+        assert tuple(item[name].shape) == shape, name
+    assert item["bitrate"].item() == 64
 
 
-def test_degraded_differs_from_clean(train: WaveformPairs) -> None:
-    """Sanity: if these matched, the pairing or the crop would be wrong."""
-    item = train[0]
-    lo, hi = target_crop(CFG)
-    rel = (item["degraded"][..., lo:hi] - item["clean"]).norm() / item["clean"].norm()
-    assert 0.01 < rel < 1.0, f"implausible degraded/clean difference: {rel:.4f}"
+@needs_codec
+def test_target_is_the_centre_crop_not_the_front(cfg) -> None:
+    """G is unpadded in time, so its output aligns with the input's centre.
 
-
-def test_evaluation_crops_are_reproducible() -> None:
-    """A benchmark must score the same audio every run.
-
-    Training deliberately draws a random window per access — that is why whole
-    tracks are stored. Evaluation inherited that, which meant two runs of
-    `scripts/evaluate.py` on one checkpoint returned different numbers, and two
-    checkpoints were compared on *different audio*. Found in the 2026-09-29
-    sweep; nothing failed, the metrics were just quietly incomparable.
+    A front crop would offset target from prediction by `sum(dilations)`
+    frames and every loss would be computed against the wrong audio.
     """
-    ds = WaveformPairs(CFG, split="test", stems=CFG.data.eval_stems, random_crop=False)
-    reads = {round(float(ds[0]["degraded"].sum()), 6) for _ in range(4)}
-    assert len(reads) == 1, "fixed-crop dataset returned different windows"
+    item = ApolloPairs(cfg)[0]
+    lo = sum(cfg.model.dilations)
+    assert item["clean"].shape[-1] == output_frames(cfg)
+    assert torch.allclose(item["clean"], item["clean_full"][..., lo : lo + output_frames(cfg)])
+    assert not torch.allclose(item["clean"], item["clean_full"][..., : output_frames(cfg)])
 
 
-def test_fixed_crops_still_differ_between_entries() -> None:
-    """Reproducible must not mean "always the track centre" — that would bias
-    every metric toward the middle of songs."""
-    ds = WaveformPairs(CFG, split="test", stems=CFG.data.eval_stems, random_crop=False)
-    a, b = float(ds[0]["degraded"].sum()), float(ds[1]["degraded"].sum())
-    assert a != b
+@needs_codec
+def test_offsets_vary_between_reads(cfg) -> None:
+    """Whole windows are stored precisely so the crop can move every epoch."""
+    ds = ApolloPairs(cfg, random_crop=True)
+    torch.manual_seed(0)
+    seen = {ApolloPairs.__getitem__(ds, 0)["clean"].sum().item() for _ in range(6)}
+    assert len(seen) > 1, "random_crop=True returned the same window every read"
 
 
-def test_training_crops_stay_random() -> None:
-    """The fix must not disable the per-epoch variation training relies on."""
-    ds = WaveformPairs(CFG, split="train")
-    reads = {round(float(ds[0]["degraded"].sum()), 6) for _ in range(4)}
-    assert len(reads) > 1, "training crops stopped varying"
+@needs_codec
+def test_fixed_crops_are_reproducible_and_still_differ_between_items(cfg) -> None:
+    """Evaluation must score identical audio across runs, but not one window."""
+    a = ApolloPairs(cfg, random_crop=False, seed=7)
+    b = ApolloPairs(cfg, random_crop=False, seed=7)
+    assert a[0]["clean"].sum().item() == b[0]["clean"].sum().item()
+    assert a[0]["clean"].sum().item() != a[3]["clean"].sum().item()
 
 
-def test_evaluate_uses_fixed_crops() -> None:
-    """The harness must opt in — the default is random, for training."""
-    import inspect
-
-    from mp3ml import evaluate as ev
-
-    assert "random_crop=False" in inspect.getsource(ev.evaluate)
+@needs_codec
+def test_degraded_differs_from_clean_but_is_finite(cfg) -> None:
+    """A pass-through would make every metric downstream meaningless."""
+    item = ApolloPairs(cfg)[0]
+    for v in item.values():
+        assert torch.isfinite(v).all()
+    full, deg = item["clean_full"], item["degraded"]
+    rel = (deg - full).norm() / full.norm()
+    assert 1e-3 < rel < 1.0, f"relative difference {rel:.4f} is implausible"
