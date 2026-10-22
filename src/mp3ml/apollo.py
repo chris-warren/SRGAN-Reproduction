@@ -160,6 +160,26 @@ def read_eval_pairs(root: Path, split: str) -> tuple[np.ndarray, np.ndarray, lis
     return ori, codec, ids
 
 
+def check_tools() -> None:
+    """Fail now if `lame` or `ffmpeg` is missing, not at the first batch.
+
+    `degrade` shells out per item, so without these the run dies on step 1 --
+    after the model is built, the corpus is indexed and, on a cluster, an
+    allocation is already running. Clusters expose them through modules
+    (`module load ffmpeg`), so the failure is both likely and cheap to avoid.
+    """
+    import shutil
+
+    missing = [t for t in ("lame", "ffmpeg") if shutil.which(t) is None]
+    if missing:
+        raise FileNotFoundError(
+            f"{', '.join(missing)} not on PATH. MP3 degradation runs per training "
+            "item, so training cannot start without them. On a cluster try "
+            "`module load ffmpeg` (lame often ships with it); locally, install "
+            "them from your package manager."
+        )
+
+
 def degrade(pcm: np.ndarray, bitrate_kbps: int, samplerate: int = 44100) -> np.ndarray:
     """MP3 encode and decode `pcm` in memory, returning float32 the same length.
 
@@ -286,8 +306,16 @@ class ApolloPairs:
         self.crop = target_crop(cfg)
         self.seed = seed
         self.random_crop = random_crop
+        check_tools()
+        root = Path(cfg.data.root)
+        if not root.is_dir():
+            raise FileNotFoundError(
+                f"corpus root {root} does not exist. Set $APOLLO_DATA or pass "
+                "--data-root; the path in the YAML is the workstation's external "
+                "drive and will not exist on a cluster."
+            )
         self.windows = index_windows(
-            Path(cfg.data.root), stems if stems is not None else tuple(cfg.data.train_stems)
+            root, stems if stems is not None else tuple(cfg.data.train_stems)
         )
 
     def __len__(self) -> int:

@@ -22,6 +22,13 @@ def main() -> None:
     p.add_argument("--run-dir", type=Path, help="default: outputs/<config name>")
     p.add_argument("--resume", action="store_true", help="continue from the newest checkpoint")
     p.add_argument("--max-steps", type=int, help="stop early; defaults to train.iterations")
+    p.add_argument(
+        "--data-root",
+        type=Path,
+        help="override the corpus path in the config (also settable with "
+        "$APOLLO_DATA). The YAML points at a workstation drive that will not "
+        "exist on a cluster.",
+    )
     p.add_argument("--device", default="cuda")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--log-every", type=int, default=50)
@@ -60,6 +67,10 @@ def main() -> None:
     )
 
     cfg = load_config(args.config)
+    if args.data_root is not None:
+        import dataclasses
+
+        cfg = dataclasses.replace(cfg, data=dataclasses.replace(cfg.data, root=args.data_root))
     if args.bitrate is not None:
         cfg = single_bitrate(cfg, args.bitrate)
     if args.deterministic:

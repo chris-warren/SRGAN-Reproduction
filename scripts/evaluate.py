@@ -47,7 +47,26 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("checkpoint", type=Path)
     p.add_argument("--config", type=Path, help="override the run's own config.json")
-    p.add_argument("--split", default="test", choices=("train", "val", "test"))
+    p.add_argument("--split", default="val", choices=("val", "test"))
+    p.add_argument(
+        "--data-root",
+        type=Path,
+        help="override the corpus path in the config (also settable with "
+        "$APOLLO_DATA). The YAML points at a workstation drive that will not "
+        "exist on a cluster.",
+    )
+    p.add_argument(
+        "--bitrate",
+        type=int,
+        help="which rate's clips to score. Only 64 is usable from this corpus "
+        "(see mp3ml.apollo); defaults to the config's first rate.",
+    )
+    p.add_argument(
+        "--aligned-only",
+        action="store_true",
+        help="drop the clips Apollo's codec_simu left misaligned instead of "
+        "correcting them from the manifest's recorded lag (the default)",
+    )
     p.add_argument("--samples", type=int, default=PAPER_N_SAMPLES, help="draws per input (§4.1)")
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-items", type=int, help="cap for a quick look")
@@ -66,6 +85,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     cfg = _config_for(args.checkpoint, args.config)
+    if args.data_root is not None:
+        import dataclasses
+
+        cfg = dataclasses.replace(cfg, data=dataclasses.replace(cfg.data, root=args.data_root))
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     g = Generator(cfg)
     g.load_state_dict(ckpt["generator"])
@@ -80,6 +103,8 @@ def main() -> None:
         device=args.device,
         max_items=args.max_items,
         with_peaq=False if args.no_peaq else None,
+        bitrate=args.bitrate,
+        aligned_only=args.aligned_only,
         seed=None if args.seed < 0 else args.seed,
     )
 

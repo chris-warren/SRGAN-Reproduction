@@ -50,7 +50,16 @@ MP3 in its own loader, so `ApolloPairs` degrades at training time too.
 ## Setup & commands
 
 - Install: `python3 -m venv .venv && ./.venv/bin/pip install -e ".[apollo,dev]"`
-  (the `apollo` extra is h5py, needed to read the corpus)
+  (the `apollo` extra is h5py, needed to read the corpus). **Nothing is
+  compiled** — the only build step this project ever had was the C granule
+  dumper, which moved to the archive.
+- **`ffmpeg` and `lame` must be on PATH**: `apollo.degrade` shells out to them
+  **per training item**, so they are runtime dependencies, not build tools. On a
+  cluster, `module load ffmpeg`. `apollo.check_tools` fails at Dataset
+  construction rather than at the first batch.
+- **Point the corpus somewhere real**: the configs carry the workstation's
+  external-drive path. Set `$APOLLO_DATA` (expanded, so `$SCRATCH/apollo_v1`
+  works) or pass `--data-root`. A missing root raises at startup.
 - Run tests: `pytest tests/ -q` — synthetic audio only, no corpus, no network
 - Lint + format: `ruff check . --fix && ruff format .`
 - Check a config's size: `python scripts/check_config.py configs/faithful.yaml --measure`

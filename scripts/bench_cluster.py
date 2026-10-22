@@ -42,10 +42,21 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=5)
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--bitrate", type=int)
+    p.add_argument(
+        "--data-root",
+        type=Path,
+        help="override the corpus path in the config (also settable with "
+        "$APOLLO_DATA). The YAML points at a workstation drive that will not "
+        "exist on a cluster.",
+    )
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
 
     cfg = load_config(args.config)
+    if args.data_root is not None:
+        import dataclasses
+
+        cfg = dataclasses.replace(cfg, data=dataclasses.replace(cfg.data, root=args.data_root))
     if args.bitrate is not None:
         cfg = single_bitrate(cfg, args.bitrate)
     device = torch.device(args.device)

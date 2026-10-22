@@ -12,6 +12,7 @@ config can be checked against a VRAM budget before committing to a run.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
@@ -92,10 +93,18 @@ class ModelConfig:
             )
 
 
+#: Environment variable that overrides `data.root`, so one config works on a
+#: workstation and a cluster without editing YAML. Named to match the Apollo
+#: replication's own `.env` convention, since both read the same corpus.
+DATA_ROOT_ENV = "APOLLO_DATA"
+
+
 @dataclass
 class DataConfig:
-    root: Path = Path("/home/chris/thesis/data/mp3ml-waveform")
-    bitrates: tuple[int, ...] = (16, 32, 64)
+    #: Overridden by `$APOLLO_DATA` if set, and `$VARS` inside a YAML value are
+    #: expanded, so `$SCRATCH/apollo_v1` works on a cluster.
+    root: Path = Path("/media/chris/Seagate Portable Drive/data/processed/apollo_v1")
+    bitrates: tuple[int, ...] = (64,)
     #: 4 s at 44.1 kHz with hop 512 gives 336 frames (paper §3.3).
     segment_frames: int = 336
     #: Stems are training augmentation; evaluate on mixtures only.
@@ -231,8 +240,17 @@ def load_config(path: Path) -> ExperimentConfig:
         for f_name, f_type in cls.__annotations__.items():
             if f_name in payload and "tuple" in str(f_type):
                 payload[f_name] = tuple(payload[f_name])
-        if key == "data" and "root" in payload:
-            payload["root"] = Path(payload["root"])
+        if key == "data":
+            # `$APOLLO_DATA` wins over the YAML, and `$VARS` inside the YAML
+            # value are expanded. The corpus lives on an external drive on the
+            # workstation and under $PROJECT or $SCRATCH on a cluster, and a
+            # hard-coded path is the kind of thing that fails at step 1 of a
+            # paid allocation.
+            override = os.environ.get(DATA_ROOT_ENV)
+            if override:
+                payload["root"] = override
+            if "root" in payload:
+                payload["root"] = Path(os.path.expandvars(str(payload["root"])))
         kwargs[key] = cls(**payload)
     return ExperimentConfig(**kwargs)
 
