@@ -125,6 +125,23 @@ class Trainer:
         torch.manual_seed(cfg.seed)
 
         # Device placement lives here and nowhere else (.claude/rules/training.md).
+        if self.device.type == "cuda":
+            # Autotune convolution algorithms. Every step has identical shapes,
+            # which is the exact case this is for, and the model contains one
+            # very unusual convolution -- `front.collapse` is
+            # `Conv2d(38, 4096, kernel=(1024, 1))`, 53.6 GFLOP/sample. With
+            # `benchmark=False` (the default) cuDNN picks an algorithm for it by
+            # heuristic, and heuristics are least reliable on shapes like that.
+            #
+            # Measured 2026-10-22: faithful.yaml ran **71.6 s/step** at batch 4
+            # on an H100, where scaling from local.yaml on a much weaker card
+            # predicts 3-7 s. Gradient checkpointing was ruled out as the cause
+            # by direct A/B (3.49 vs 3.20 s/step, an 8% effect).
+            #
+            # Caveat: algorithm choice changes floating-point summation order,
+            # so runs are not bitwise reproducible across machines. Seeds still
+            # fix the data order and the noise draws.
+            torch.backends.cudnn.benchmark = True
         self.g = Generator(cfg).to(self.device)
         self.d = Critic(cfg).to(self.device)
         self.opt_g = self._make_opt(self.g, cfg.train.lr_g)
