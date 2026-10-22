@@ -128,20 +128,29 @@ def main() -> None:
     del it, loader
 
     # --- 2. a real training step --------------------------------------------
-    trainer = Trainer(
-        cfg,
-        Path("outputs") / f"bench_{cfg.name}",
-        device=device,
-        tracker=Tracker(Path("outputs") / f"bench_{cfg.name}", cfg, backend="none"),
-    )
+    # Progress is printed throughout on purpose. This used to pass
+    # log_every=10**9 to keep the timing clean, which made the script silent
+    # for minutes -- indistinguishable from a hang, and it cost real allocation
+    # time on 2026-10-22. A few log lines are worth far more than tidy output.
+    run_dir = Path("outputs") / f"bench_{cfg.name}"
+    print("building model and optimizers...", flush=True)
+    trainer = Trainer(cfg, run_dir, device=device, tracker=Tracker(run_dir, cfg, backend="none"))
     if device.type == "cuda":
+        print(
+            f"  model on device, {torch.cuda.memory_allocated() / 1e9:.2f} GB "
+            "allocated before any step",
+            flush=True,
+        )
         torch.cuda.reset_peak_memory_stats()
+
+    print(f"warm-up: {args.warmup} steps (dataloader workers start here)...", flush=True)
     trainer.fit(
-        log_every=10**9, checkpoint_every=10**9, max_steps=args.warmup, num_workers=args.workers
+        log_every=1, checkpoint_every=10**9, max_steps=args.warmup, num_workers=args.workers
     )
+    print(f"timing: {args.steps} steps...", flush=True)
     t0 = time.perf_counter()
     trainer.fit(
-        log_every=10**9,
+        log_every=1,
         checkpoint_every=10**9,
         max_steps=args.warmup + args.steps,
         num_workers=args.workers,
