@@ -43,6 +43,19 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--bitrate", type=int)
     p.add_argument(
+        "--batch-size",
+        type=int,
+        help="override the config's batch size. The paper's 12 is [P], but a "
+        "measurement that OOMs is no measurement -- halve it until it fits, then "
+        "scale the memory figure back up. Activations dominate and scale ~linearly.",
+    )
+    p.add_argument(
+        "--memory-breakdown",
+        action="store_true",
+        help="report where the memory goes (weights, grads, optimizer, peak) "
+        "instead of only the peak",
+    )
+    p.add_argument(
         "--data-root",
         type=Path,
         help="override the corpus path in the config (also settable with "
@@ -53,6 +66,12 @@ def main() -> None:
     args = p.parse_args()
 
     cfg = load_config(args.config)
+    if args.batch_size is not None:
+        import dataclasses
+
+        cfg = dataclasses.replace(
+            cfg, train=dataclasses.replace(cfg.train, batch_size=args.batch_size)
+        )
     if args.data_root is not None:
         import dataclasses
 
@@ -130,6 +149,22 @@ def main() -> None:
     step_s = (time.perf_counter() - t0) / args.steps
 
     print(f"step: {step_s:.3f} s/step over {args.steps} steps")
+    if args.memory_breakdown and device.type == "cuda":
+        n_g = sum(p.numel() for p in trainer.generator.parameters())
+        n_d = sum(p.numel() for p in trainer.critic.parameters())
+        gb = 4 / 1e9
+        print(
+            f"  weights        {(n_g + n_d) * gb:6.2f} GB  "
+            f"(G {n_g / 1e6:.0f} M + D {n_d / 1e6:.0f} M)"
+        )
+        print(f"  + grads        {(n_g + n_d) * gb:6.2f} GB")
+        print(f"  + Adam moments {(n_g + n_d) * 2 * gb:6.2f} GB")
+        fixed = (n_g + n_d) * 4 * gb
+        print(f"  = fixed        {fixed:6.2f} GB")
+        print(
+            f"  activations etc{torch.cuda.max_memory_allocated() / 1e9 - fixed:6.2f}"
+            " GB (peak minus fixed)"
+        )
     if device.type == "cuda":
         peak = torch.cuda.max_memory_allocated() / 1e9
         total = torch.cuda.get_device_properties(device).total_memory / 1e9
