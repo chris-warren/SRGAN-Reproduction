@@ -57,6 +57,26 @@ def noise_frames(cfg: ExperimentConfig) -> int:
     return cfg.data.segment_frames - 2 * cfg.model.dilations[0]
 
 
+def _grad_scaler(enabled: bool):
+    """A CUDA `GradScaler` across torch versions.
+
+    `torch.amp.GradScaler("cuda", ...)` is the device-first API from torch 2.3;
+    before that the spelling is `torch.cuda.amp.GradScaler(...)`. Supporting
+    both is three lines and buys a real constraint back: the Apollo replication
+    runs in a container pinned to **torch 2.0.0** (torchaudio 2.0.1 needs
+    FFmpeg 4 for `apply_codec`), and sharing one image for both models is
+    operationally much simpler than maintaining two. This reproduction has no
+    such pin of its own -- it calls `lame` and `ffmpeg` as CLIs and never
+    imports torchaudio.
+    """
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        try:
+            return torch.amp.GradScaler("cuda", enabled=enabled)
+        except TypeError:  # torch 2.0-2.2: no device argument
+            pass
+    return torch.cuda.amp.GradScaler(enabled=enabled)
+
+
 def sample_noise(cfg: ExperimentConfig, batch: int, device: torch.device) -> torch.Tensor:
     """`z ~ N(0, I)` as a **per-excerpt vector** `(batch, noise_ch)` (§3.1.1).
 
@@ -127,8 +147,8 @@ class Trainer:
         # AMP is off on CPU: autocast there covers a different set of ops and
         # GradScaler is a no-op, so a "working" CPU smoke test would prove nothing.
         self.amp = bool(cfg.train.amp) and self.device.type == "cuda"
-        self.scaler_g = torch.amp.GradScaler("cuda", enabled=self.amp)
-        self.scaler_d = torch.amp.GradScaler("cuda", enabled=self.amp)
+        self.scaler_g = _grad_scaler(self.amp)
+        self.scaler_d = _grad_scaler(self.amp)
 
         (self.run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         (self.run_dir / "config.json").write_text(json.dumps(config_to_dict(cfg), indent=2))

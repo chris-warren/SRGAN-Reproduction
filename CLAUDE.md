@@ -53,6 +53,23 @@ MP3 in its own loader, so `ApolloPairs` degrades at training time too.
   (the `apollo` extra is h5py, needed to read the corpus). **Nothing is
   compiled** — the only build step this project ever had was the C granule
   dumper, which moved to the archive.
+- **There is no container here.** `pip install -e .` goes into whatever Python
+  is active, so create a venv first. On DRAC the wheelhouse is used instead of
+  PyPI:
+
+  ```sh
+  module load python/3.11            # older modules only carry torch 1.9
+  avail_wheels torch                 # see what the wheelhouse actually has
+  virtualenv --no-download $PROJECT/srgan-env
+  source $PROJECT/srgan-env/bin/activate
+  pip install --no-index --upgrade pip
+  pip install --no-index -e ".[apollo,dev]"
+  ```
+
+  `torch>=2.0` is deliberately loose, so the Apollo replication's container
+  (torch 2.0.0) also works — `train._grad_scaler` handles both `GradScaler`
+  spellings. Unlike Apollo this code imports **no torchaudio** and pins **no
+  FFmpeg version**, because it calls `lame` and `ffmpeg` as CLIs.
 - **`ffmpeg` and `lame` must be on PATH**: `apollo.degrade` shells out to them
   **per training item**, so they are runtime dependencies, not build tools. On a
   cluster, `module load ffmpeg`. `apollo.check_tools` fails at Dataset

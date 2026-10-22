@@ -7,7 +7,12 @@ dependencies = [
     "numpy>=2.0",
     "soundfile>=0.13",
     "pyyaml>=6.0",
-    "torch>=2.6",
+    # 2.0 is the real floor. `train._grad_scaler` handles both GradScaler
+    # spellings, `torch.autocast` is 1.10, `torch.load(weights_only=...)` is
+    # 1.13 and `torch.linalg.eigh` is 1.8. This was pinned at >=2.6 for no
+    # reason beyond what happened to be installed, which blocked a cluster
+    # wheelhouse and the Apollo container's torch 2.0.0 alike.
+    "torch>=2.0",
 ]
 
 [project.optional-dependencies]

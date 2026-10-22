@@ -191,8 +191,10 @@ def degrade(pcm: np.ndarray, bitrate_kbps: int, samplerate: int = 44100) -> np.n
     `MP3_PRIMING_DELAY` samples of priming; `verify_constant_delay` checks that
     the constant is right for this encoder rather than assuming it.
 
-    Encoder flags match `mp3ml.encode.reference_encode` (`-t`, CBR, mono) so
-    the degradation is the same one the rest of the project measures.
+    Encoder flags are the stock `lame` CLI's: `-t` (no LAME/Xing tag), CBR,
+    mono. Called as a subprocess rather than through torchaudio, so no FFmpeg
+    version is pinned -- the Apollo replication needs FFmpeg 4 for
+    `apply_codec`; this does not.
     """
     import subprocess
 
