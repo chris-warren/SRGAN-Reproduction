@@ -76,12 +76,12 @@ train:
   profile_theta_rhyt: 1.0e-5
   profile_p_freq: 1.3   # paper eq. 3
   profile_p_rhyt: 1.6   # paper eq. 3
-  # UNVERIFIED on the target hardware. On our RTX 2070 Super (Turing) amp is a
-  # 1.6x *pessimisation* for this model (see local.yaml and REPRODUCTION.md
-  # 4.3), but that measurement does not transfer: Ampere/Hopper cards have far
-  # better fp16/bf16 tensor-core utilisation. Left on, but BENCHMARK IT on the
-  # cloud GPU before committing to a 40k-iteration run -- it is a one-command
-  # check and the difference is hours.
+  # The old claim that amp was a 1.6x pessimisation here is VOID: re-measured
+  # 2026-10-22 on the same card, amp ON is 1.2x faster (2.265 vs 2.725 s/step).
+  # Neither flag explains the 71.6 s/step seen at batch 4 on an H100 -- amp,
+  # grad_checkpoint (8%) and the collapse conv (68 ms of a 71,500 ms step) have
+  # all been ruled out by measurement. Still BENCHMARK on the target card:
+  # scripts/bench_cluster.py --amp {on,off}.
   amp: true
   grad_checkpoint: true
   optimizer: adam

@@ -67,14 +67,14 @@ train:
   profile_theta_rhyt: 1.0e-5
   profile_p_freq: 1.3
   profile_p_rhyt: 1.6
-  # MEASURED on the RTX 2070 Super (Turing), batch 4: amp makes this model
-  # SLOWER, not faster -- 19.6 s/step with amp vs 12.4 s/step without (and
-  # 7.8 GB peak vs 5.7 GB). We force the gradient penalty and the generator
-  # loss to fp32 for correctness, so autocast pays the casting cost on the
-  # expensive paths without buying fp16 throughput, and Conv4's 38 input
-  # channels are not a multiple of 8 so tensor cores likely never engage.
-  # This is a property of THIS card -- re-measure on the cloud GPU before
-  # assuming it holds there. See REPRODUCTION.md section 3.4.
+  # RE-MEASURED 2026-10-22 on the same RTX 2070 Super, and the old figure no
+  # longer holds: amp ON is now 2.265 s/step vs 2.725 s/step OFF, i.e. 1.2x
+  # FASTER. The superseded note read "19.6 s/step with amp vs 12.4 without".
+  # Both the absolute numbers and the direction changed, because the critic was
+  # rebuilt as a grouped stack, the gradient penalty now differentiates the
+  # mean, and cudnn.benchmark is enabled. grad_checkpoint is likewise a 8%
+  # effect now (3.49 on vs 3.20 off), not the 12.4-vs-14.1 recorded before.
+  # Treat any performance figure older than those changes as void.
   amp: false
   grad_checkpoint: true # measured slightly FASTER than false here (12.4 vs 14.1)
   optimizer: adam
