@@ -2,7 +2,14 @@
 name = "mp3ml"
 version = "0.1.0"
 description = "Dataset preparation for MP3 compression reversal"
-requires-python = ">=3.12"
+# 3.10 is the real floor and was verified, not guessed: the whole tree compiles
+# under python3.10 (`python3.10 -m compileall src scripts tests`), and nothing
+# uses a 3.11+ or 3.12+ feature -- no PEP 695 generics, no `type` statement, no
+# tomllib, datetime.UTC, StrEnum, ExceptionGroup or itertools.batched. The pin
+# said >=3.12 only because that is what was installed here, which blocked a
+# cluster module offering 3.11. The test suite is run on 3.12; 3.10 and 3.11
+# are compile-verified.
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0",
     "soundfile>=0.13",
