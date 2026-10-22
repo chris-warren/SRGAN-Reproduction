@@ -23,6 +23,7 @@ claims do not survive (REPRODUCTION.md §3.4).
 from __future__ import annotations
 
 import argparse
+import logging
 import time
 from pathlib import Path
 
@@ -79,6 +80,16 @@ def main() -> None:
     )
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
+
+    # Without this every logger.info() in the training loop is swallowed, so
+    # `log_every=1` below prints nothing and the script looks hung while it is
+    # working. That happened twice on 2026-10-22; the print() calls around the
+    # fit() stages are not enough on their own.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     cfg = load_config(args.config)
     if args.batch_size is not None:
