@@ -50,6 +50,21 @@ def main() -> None:
         "scale the memory figure back up. Activations dominate and scale ~linearly.",
     )
     p.add_argument(
+        "--grad-checkpoint",
+        choices=("on", "off"),
+        help="override cfg.train.grad_checkpoint. It trades compute for memory, "
+        "and interacts badly with the gradient penalty: the penalty needs "
+        "create_graph=True, so checkpointed segments are recomputed inside a "
+        "second backward pass. Measured 71.6 s/step with it ON at batch 4 on an "
+        "H100, which is why this switch exists.",
+    )
+    p.add_argument(
+        "--amp",
+        choices=("on", "off"),
+        help="override cfg.train.amp. Unverified on Hopper; on our Turing card it "
+        "was a 1.6x pessimisation.",
+    )
+    p.add_argument(
         "--memory-breakdown",
         action="store_true",
         help="report where the memory goes (weights, grads, optimizer, peak) "
@@ -72,6 +87,15 @@ def main() -> None:
         cfg = dataclasses.replace(
             cfg, train=dataclasses.replace(cfg.train, batch_size=args.batch_size)
         )
+    overrides = {}
+    if args.grad_checkpoint is not None:
+        overrides["grad_checkpoint"] = args.grad_checkpoint == "on"
+    if args.amp is not None:
+        overrides["amp"] = args.amp == "on"
+    if overrides:
+        import dataclasses
+
+        cfg = dataclasses.replace(cfg, train=dataclasses.replace(cfg.train, **overrides))
     if args.data_root is not None:
         import dataclasses
 
@@ -159,8 +183,8 @@ def main() -> None:
 
     print(f"step: {step_s:.3f} s/step over {args.steps} steps")
     if args.memory_breakdown and device.type == "cuda":
-        n_g = sum(p.numel() for p in trainer.generator.parameters())
-        n_d = sum(p.numel() for p in trainer.critic.parameters())
+        n_g = sum(p.numel() for p in trainer.g.parameters())
+        n_d = sum(p.numel() for p in trainer.d.parameters())
         gb = 4 / 1e9
         print(
             f"  weights        {(n_g + n_d) * gb:6.2f} GB  "
